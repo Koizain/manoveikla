@@ -40,6 +40,14 @@ export default function Footer() {
               </li>
               <li>
                 <Link
+                  href="/palyginimas"
+                  className="text-sm text-muted transition-colors hover:text-foreground"
+                >
+                  IV vs MB palyginimas
+                </Link>
+              </li>
+              <li>
+                <Link
                   href="/terminai"
                   className="text-sm text-muted transition-colors hover:text-foreground"
                 >

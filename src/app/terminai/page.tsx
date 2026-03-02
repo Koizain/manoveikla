@@ -1,199 +1,188 @@
-import type { Metadata } from "next";
+"use client";
 
-export const metadata: Metadata = {
-  title: "Mokesčių terminai 2026 — Mano Veikla",
-  description:
-    "Individualios veiklos mokesčių terminai 2026 metams. GPM avansai, Sodra įmokos, metinė deklaracija.",
-};
+import { useState, useEffect, useMemo } from "react";
+import { calculateTaxes, formatCurrency, TAX_CONSTANTS_2026, type TaxOptions } from "@/lib/tax";
+
+const TRACKER_KEY = "manoveikla-tracker";
 
 interface Deadline {
-  date: string;
   title: string;
   description: string;
   type: "gpm" | "sodra" | "declaration" | "pvm";
+  getDate: (year: number) => Date;
+  getAmount?: (annualIncome: number, options: TaxOptions) => number | null;
 }
 
-const deadlines: Deadline[] = [
-  // Q1
+const deadlineTemplates: Deadline[] = [
+  // GPM quarterly
+  ...[
+    { month: 2, day: 15, quarter: "I" },
+    { month: 5, day: 15, quarter: "II" },
+    { month: 8, day: 15, quarter: "III" },
+    { month: 11, day: 15, quarter: "IV" },
+  ].map(({ month, day, quarter }) => ({
+    title: `GPM avansas (${quarter} ketv.)`,
+    description: `${quarter}-ojo ketvirčio GPM avansinis mokėjimas`,
+    type: "gpm" as const,
+    getDate: (year: number) => new Date(year, month, day),
+    getAmount: (annualIncome: number, options: TaxOptions) => {
+      const result = calculateTaxes(annualIncome, options);
+      return result.gpm / 4;
+    },
+  })),
+  // Sodra monthly (15th)
+  ...Array.from({ length: 12 }, (_, i) => {
+    const monthNames = [
+      "sausį", "vasarį", "kovą", "balandį", "gegužę", "birželį",
+      "liepą", "rugpjūtį", "rugsėjį", "spalį", "lapkritį", "gruodį",
+    ];
+    return {
+      title: "Sodra įmokos",
+      description: `Mėnesinės VSD ir PSD įmokos už ${monthNames[i === 0 ? 11 : i - 1]}`,
+      type: "sodra" as const,
+      getDate: (year: number) => new Date(year, i, 15),
+      getAmount: (annualIncome: number, options: TaxOptions) => {
+        const result = calculateTaxes(annualIncome, options);
+        return (result.vsd + result.psd) / 12;
+      },
+    };
+  }),
+  // Annual declaration - May 1
   {
-    date: "Sausio 15",
-    title: "Sodra įmokos",
-    description: "Mėnesinės VSD ir PSD įmokos už gruodį",
-    type: "sodra",
-  },
-  {
-    date: "Sausio 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už gruodį (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  {
-    date: "Vasario 15",
-    title: "Sodra įmokos",
-    description: "Mėnesinės VSD ir PSD įmokos už sausį",
-    type: "sodra",
-  },
-  {
-    date: "Vasario 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už sausį (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  {
-    date: "Kovo 15",
-    title: "GPM avansas + Sodra",
-    description: "I-ojo ketvirčio GPM avansinis mokėjimas ir Sodra įmokos už vasarį",
-    type: "gpm",
-  },
-  {
-    date: "Kovo 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už vasarį (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  // Q2
-  {
-    date: "Balandžio 15",
-    title: "Sodra įmokos",
-    description: "Mėnesinės VSD ir PSD įmokos už kovą",
-    type: "sodra",
-  },
-  {
-    date: "Balandžio 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už kovą (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  {
-    date: "Gegužės 1",
     title: "Metinė deklaracija",
     description: "Metinės pajamų deklaracijos pateikimas už praėjusius metus",
-    type: "declaration",
+    type: "declaration" as const,
+    getDate: (year: number) => new Date(year, 4, 1),
   },
-  {
-    date: "Gegužės 15",
-    title: "Sodra įmokos",
-    description: "Mėnesinės VSD ir PSD įmokos už balandį",
-    type: "sodra",
-  },
-  {
-    date: "Gegužės 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už balandį (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  {
-    date: "Birželio 15",
-    title: "GPM avansas + Sodra",
-    description: "II-ojo ketvirčio GPM avansinis mokėjimas ir Sodra įmokos už gegužę",
-    type: "gpm",
-  },
-  {
-    date: "Birželio 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už gegužę (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  // Q3
-  {
-    date: "Liepos 15",
-    title: "Sodra įmokos",
-    description: "Mėnesinės VSD ir PSD įmokos už birželį",
-    type: "sodra",
-  },
-  {
-    date: "Liepos 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už birželį (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  {
-    date: "Rugpjūčio 15",
-    title: "Sodra įmokos",
-    description: "Mėnesinės VSD ir PSD įmokos už liepą",
-    type: "sodra",
-  },
-  {
-    date: "Rugpjūčio 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už liepą (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  {
-    date: "Rugsėjo 15",
-    title: "GPM avansas + Sodra",
-    description: "III-ojo ketvirčio GPM avansinis mokėjimas ir Sodra įmokos už rugpjūtį",
-    type: "gpm",
-  },
-  {
-    date: "Rugsėjo 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už rugpjūtį (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  // Q4
-  {
-    date: "Spalio 15",
-    title: "Sodra įmokos",
-    description: "Mėnesinės VSD ir PSD įmokos už rugsėjį",
-    type: "sodra",
-  },
-  {
-    date: "Spalio 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už rugsėjį (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  {
-    date: "Lapkričio 15",
-    title: "Sodra įmokos",
-    description: "Mėnesinės VSD ir PSD įmokos už spalį",
-    type: "sodra",
-  },
-  {
-    date: "Lapkričio 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už spalį (jei PVM mokėtojas)",
-    type: "pvm",
-  },
-  {
-    date: "Gruodžio 15",
-    title: "GPM avansas + Sodra",
-    description: "IV-ojo ketvirčio GPM avansinis mokėjimas ir Sodra įmokos už lapkritį",
-    type: "gpm",
-  },
-  {
-    date: "Gruodžio 25",
-    title: "PVM deklaracija",
-    description: "PVM deklaracija už lapkritį (jei PVM mokėtojas)",
-    type: "pvm",
-  },
+  // PVM monthly 25th (only shown if income near 45K)
+  ...Array.from({ length: 12 }, (_, i) => {
+    const monthNames = [
+      "gruodį", "sausį", "vasarį", "kovą", "balandį", "gegužę",
+      "birželį", "liepą", "rugpjūtį", "rugsėjį", "spalį", "lapkritį",
+    ];
+    return {
+      title: "PVM deklaracija",
+      description: `PVM deklaracija už ${monthNames[i]} (jei PVM mokėtojas)`,
+      type: "pvm" as const,
+      getDate: (year: number) => new Date(year, i, 25),
+      getAmount: () => null,
+    };
+  }),
 ];
 
 const typeConfig = {
   gpm: {
-    color: "border-emerald-accent bg-emerald-muted text-emerald-accent",
+    color: "border-emerald-accent/30 bg-emerald-accent/10 text-emerald-accent",
     badge: "GPM",
     dot: "bg-emerald-accent",
   },
   sodra: {
-    color: "border-blue-500/20 bg-blue-500/10 text-blue-400",
+    color: "border-blue-500/30 bg-blue-500/10 text-blue-400",
     badge: "Sodra",
     dot: "bg-blue-400",
   },
   declaration: {
-    color: "border-purple-500/20 bg-purple-500/10 text-purple-400",
+    color: "border-purple-500/30 bg-purple-500/10 text-purple-400",
     badge: "Deklaracija",
     dot: "bg-purple-400",
   },
   pvm: {
-    color: "border-yellow-500/20 bg-yellow-500/10 text-yellow-400",
+    color: "border-yellow-500/30 bg-yellow-500/10 text-yellow-400",
     badge: "PVM",
     dot: "bg-yellow-400",
   },
 };
 
+function formatLithuanianDate(date: Date): string {
+  const months = [
+    "sausio", "vasario", "kovo", "balandžio", "gegužės", "birželio",
+    "liepos", "rugpjūčio", "rugsėjo", "spalio", "lapkričio", "gruodžio",
+  ];
+  return `${date.getFullYear()} ${months[date.getMonth()]} ${date.getDate()} d.`;
+}
+
+function getDaysLeft(date: Date): number {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const target = new Date(date);
+  target.setHours(0, 0, 0, 0);
+  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function getStatusColor(daysLeft: number): string {
+  if (daysLeft < 0) return "border-l-zinc-500";
+  if (daysLeft < 7) return "border-l-red-accent";
+  if (daysLeft <= 30) return "border-l-yellow-accent";
+  return "border-l-emerald-accent";
+}
+
+function getCountdownText(daysLeft: number): { text: string; className: string } {
+  if (daysLeft < 0) return { text: `Praėjo prieš ${Math.abs(daysLeft)} d.`, className: "text-zinc-500" };
+  if (daysLeft === 0) return { text: "Šiandien!", className: "text-red-accent font-bold" };
+  if (daysLeft === 1) return { text: "Rytoj!", className: "text-red-accent font-bold" };
+  if (daysLeft < 7) return { text: `Liko ${daysLeft} d.`, className: "text-red-accent font-semibold" };
+  if (daysLeft <= 30) return { text: `Liko ${daysLeft} d.`, className: "text-yellow-accent" };
+  return { text: `Liko ${daysLeft} d.`, className: "text-emerald-accent" };
+}
+
+type FilterType = "all" | "gpm" | "sodra" | "declaration" | "pvm";
+
 export default function DeadlinesPage() {
+  const [filter, setFilter] = useState<FilterType>("all");
+  const [annualIncome, setAnnualIncome] = useState(0);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(TRACKER_KEY);
+      if (saved) {
+        const months: number[] = JSON.parse(saved);
+        setAnnualIncome(months.reduce((a: number, b: number) => a + b, 0));
+      }
+    } catch {}
+    setMounted(true);
+  }, []);
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const showPVM = annualIncome >= TAX_CONSTANTS_2026.PVM_THRESHOLD * 0.7;
+
+  const options: TaxOptions = {
+    expenseMethod: "30percent",
+    actualExpenses: 0,
+    additionalPension: false,
+    employedElsewhere: false,
+  };
+
+  const deadlines = useMemo(() => {
+    const items = deadlineTemplates
+      .filter((d) => d.type !== "pvm" || showPVM)
+      .flatMap((template) => {
+        // Generate for current year and next year
+        return [year, year + 1].map((y) => {
+          const date = template.getDate(y);
+          const daysLeft = getDaysLeft(date);
+          const amount = template.getAmount ? template.getAmount(annualIncome, options) : null;
+          return {
+            ...template,
+            date,
+            daysLeft,
+            amount,
+          };
+        });
+      })
+      .filter((d) => d.daysLeft >= -30) // Show past 30 days
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    // Take past items + next 20 upcoming
+    const past = items.filter((d) => d.daysLeft < 0);
+    const future = items.filter((d) => d.daysLeft >= 0).slice(0, 20);
+    return [...past, ...future];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, showPVM, annualIncome]);
+
+  const filtered = filter === "all" ? deadlines : deadlines.filter((d) => d.type === filter);
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
       <div className="mb-8">
@@ -201,54 +190,82 @@ export default function DeadlinesPage() {
           Mokesčių terminai 2026
         </h1>
         <p className="mt-2 text-muted">
-          Individualios veiklos mokesčių kalendorius
+          Artimiausi mokesčių terminai — surikiuoti pagal datą
         </p>
       </div>
 
-      {/* Legend */}
-      <div className="mb-8 flex flex-wrap gap-3">
-        {Object.entries(typeConfig).map(([key, config]) => (
-          <div
+      {/* Filter pills */}
+      <div className="mb-6 flex flex-wrap gap-2">
+        {([
+          { key: "all", label: "Visi" },
+          { key: "gpm", label: "GPM" },
+          { key: "sodra", label: "Sodra" },
+          { key: "declaration", label: "Deklaracija" },
+          ...(showPVM ? [{ key: "pvm", label: "PVM" }] : []),
+        ] as { key: FilterType; label: string }[]).map(({ key, label }) => (
+          <button
             key={key}
-            className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5"
+            onClick={() => setFilter(key)}
+            className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
+              filter === key
+                ? "bg-emerald-accent text-black"
+                : "border border-border text-muted hover:text-foreground"
+            }`}
           >
-            <div className={`h-2.5 w-2.5 rounded-full ${config.dot}`} />
-            <span className="text-sm text-muted">{config.badge}</span>
-          </div>
+            {label}
+          </button>
         ))}
       </div>
 
-      {/* Timeline */}
-      <div className="relative space-y-3">
-        <div className="absolute left-[19px] top-2 bottom-2 w-px bg-border sm:left-[23px]" />
+      {/* Income context notice */}
+      {mounted && annualIncome > 0 && (
+        <div className="mb-6 rounded-xl border border-emerald-border bg-emerald-muted/30 p-4 text-sm text-muted">
+          Sumos skaičiuojamos pagal jūsų metinės apskaitos duomenis: {formatCurrency(annualIncome)} metinės pajamos.
+        </div>
+      )}
 
-        {deadlines.map((deadline, i) => {
+      {/* Deadline Cards */}
+      <div className="space-y-3">
+        {filtered.map((deadline, i) => {
           const config = typeConfig[deadline.type];
+          const statusColor = getStatusColor(deadline.daysLeft);
+          const countdown = getCountdownText(deadline.daysLeft);
+          const isPast = deadline.daysLeft < 0;
+
           return (
-            <div key={i} className="relative flex gap-4 sm:gap-5">
-              <div className="relative z-10 mt-2 flex h-[10px] w-[10px] shrink-0 items-center justify-center sm:h-[12px] sm:w-[12px]">
-                <div
-                  className={`h-2.5 w-2.5 rounded-full sm:h-3 sm:w-3 ${config.dot}`}
-                />
-              </div>
-              <div className="flex-1 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-card-hover">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold">{deadline.title}</h3>
-                      <span
-                        className={`rounded-md border px-2 py-0.5 text-xs font-medium ${config.color}`}
-                      >
-                        {config.badge}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-sm text-muted">
-                      {deadline.description}
-                    </p>
+            <div
+              key={`${deadline.type}-${deadline.date.getTime()}-${i}`}
+              className={`rounded-xl border border-border border-l-4 ${statusColor} bg-card p-4 transition-colors hover:bg-card-hover ${
+                isPast ? "opacity-50" : ""
+              }`}
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className={`font-semibold ${isPast ? "text-muted" : ""}`}>
+                      {deadline.title}
+                    </h3>
+                    <span
+                      className={`rounded-md border px-2 py-0.5 text-xs font-medium ${config.color}`}
+                    >
+                      {config.badge}
+                    </span>
                   </div>
-                  <span className="shrink-0 text-sm font-medium text-muted">
-                    {deadline.date}
-                  </span>
+                  <p className="mt-1 text-sm text-muted">{deadline.description}</p>
+                </div>
+
+                <div className="flex items-center gap-4 sm:flex-col sm:items-end sm:gap-1">
+                  <div className="text-sm font-medium text-muted">
+                    {formatLithuanianDate(deadline.date)}
+                  </div>
+                  <div className={`text-sm ${countdown.className}`}>
+                    {countdown.text}
+                  </div>
+                  {deadline.amount !== null && deadline.amount > 0 && annualIncome > 0 && !isPast && (
+                    <div className="text-sm font-semibold text-emerald-accent">
+                      ~{formatCurrency(deadline.amount)}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -269,12 +286,15 @@ export default function DeadlinesPage() {
             rugsėjo 15 ir gruodžio 15 dienomis.
           </li>
           <li>
-            PVM deklaracija aktuali tik PVM mokėtojams (pajamos viršija
-            45 000 € per metus).
+            PVM deklaracija rodoma tik kai metinės pajamos artėja prie
+            45 000 € ribos.
           </li>
           <li>
             Sodra (VSD + PSD) įmokos mokamos kas mėnesį iki 15 dienos
             už praėjusį mėnesį.
+          </li>
+          <li>
+            Sumos yra orientacinės ir skaičiuojamos pagal metinės apskaitos duomenis.
           </li>
         </ul>
       </div>

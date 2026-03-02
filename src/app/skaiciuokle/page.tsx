@@ -11,6 +11,37 @@ import {
 } from "@/lib/tax";
 
 const STORAGE_KEY = "manoveikla-inputs";
+const TRACKER_KEY = "manoveikla-tracker";
+
+const MONTHS = [
+  "Sausis", "Vasaris", "Kovas", "Balandis",
+  "Gegužė", "Birželis", "Liepa", "Rugpjūtis",
+  "Rugsėjis", "Spalis", "Lapkritis", "Gruodis",
+];
+
+const GPM_DEADLINES = [
+  { month: 2, day: 15, label: "Kovo 15" },     // Q1 - Mar 15
+  { month: 5, day: 15, label: "Birželio 15" },  // Q2 - Jun 15
+  { month: 8, day: 15, label: "Rugsėjo 15" },   // Q3 - Sep 15
+  { month: 11, day: 15, label: "Gruodžio 15" },  // Q4 - Dec 15
+];
+
+function getNextGPMDeadline(): { label: string; date: Date; daysLeft: number } | null {
+  const now = new Date();
+  const year = now.getFullYear();
+
+  for (const dl of GPM_DEADLINES) {
+    const date = new Date(year, dl.month, dl.day);
+    const diff = Math.ceil((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    if (diff > 0) {
+      return { label: dl.label, date, daysLeft: diff };
+    }
+  }
+  // Next year Q1
+  const nextQ1 = new Date(year + 1, 2, 15);
+  const diff = Math.ceil((nextQ1.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  return { label: "Kovo 15", date: nextQ1, daysLeft: diff };
+}
 
 interface InputState {
   monthlyIncome: number;
@@ -41,10 +72,15 @@ function loadInputs(): InputState {
 
 export default function CalculatorPage() {
   const [inputs, setInputs] = useState<InputState>(defaultInputs);
+  const [monthlyIncomes, setMonthlyIncomes] = useState<number[]>(new Array(12).fill(0));
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setInputs(loadInputs());
+    try {
+      const saved = localStorage.getItem(TRACKER_KEY);
+      if (saved) setMonthlyIncomes(JSON.parse(saved));
+    } catch {}
     setMounted(true);
   }, []);
 
@@ -53,6 +89,12 @@ export default function CalculatorPage() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(inputs));
     }
   }, [inputs, mounted]);
+
+  useEffect(() => {
+    if (mounted) {
+      localStorage.setItem(TRACKER_KEY, JSON.stringify(monthlyIncomes));
+    }
+  }, [monthlyIncomes, mounted]);
 
   const update = useCallback(
     <K extends keyof InputState>(key: K, value: InputState[K]) => {
@@ -370,6 +412,158 @@ export default function CalculatorPage() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Running Total Tracker */}
+      <RunningTotalTracker
+        monthlyIncomes={monthlyIncomes}
+        setMonthlyIncomes={setMonthlyIncomes}
+        options={options}
+      />
+    </div>
+  );
+}
+
+function RunningTotalTracker({
+  monthlyIncomes,
+  setMonthlyIncomes,
+  options,
+}: {
+  monthlyIncomes: number[];
+  setMonthlyIncomes: (v: number[]) => void;
+  options: TaxOptions;
+}) {
+  const updateMonth = (index: number, value: number) => {
+    const updated = [...monthlyIncomes];
+    updated[index] = Math.max(0, value);
+    setMonthlyIncomes(updated);
+  };
+
+  // Calculate running totals
+  const runningTotals = MONTHS.map((_, i) => {
+    const ytdIncome = monthlyIncomes.slice(0, i + 1).reduce((a, b) => a + b, 0);
+    const ytdResult = calculateTaxes(ytdIncome, options);
+    return {
+      income: ytdIncome,
+      tax: ytdResult.totalTax,
+      net: ytdResult.netIncome,
+    };
+  });
+
+  const totalIncome = monthlyIncomes.reduce((a, b) => a + b, 0);
+  const pvmThreshold = TAX_CONSTANTS_2026.PVM_THRESHOLD;
+  const pvmProgress = Math.min((totalIncome / pvmThreshold) * 100, 100);
+  const pvmColor = pvmProgress < 60 ? "bg-emerald-accent" : pvmProgress < 80 ? "bg-yellow-accent" : "bg-red-accent";
+
+  const nextGPM = getNextGPMDeadline();
+  const yearResult = calculateTaxes(totalIncome, options);
+  const quarterlyGPM = yearResult.gpm / 4;
+
+  return (
+    <div className="mt-12">
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold">Mano metinė apskaita</h2>
+        <p className="mt-2 text-muted">
+          Įvesk kiekvieno mėnesio pajamas ir sek savo metinius rodiklius
+        </p>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="mb-6 grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <div className="mb-1 text-sm text-muted">Pajamos (YTD)</div>
+          <div className="text-2xl font-bold">{formatCurrency(totalIncome)}</div>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <div className="mb-1 text-sm text-muted">Mokesčiai (YTD)</div>
+          <div className="text-2xl font-bold text-red-accent">
+            {formatCurrency(yearResult.totalTax)}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-emerald-border bg-emerald-muted p-5">
+          <div className="mb-1 text-sm text-muted">Grynasis pelnas (YTD)</div>
+          <div className="text-2xl font-bold text-emerald-accent">
+            {formatCurrency(yearResult.netIncome)}
+          </div>
+        </div>
+      </div>
+
+      {/* PVM Progress Bar */}
+      <div className="mb-6 rounded-2xl border border-border bg-card p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="font-semibold">PVM registracijos riba</h3>
+          <span className="text-sm text-muted">
+            {formatCurrency(totalIncome)} / {formatCurrency(pvmThreshold)}
+          </span>
+        </div>
+        <div className="h-4 overflow-hidden rounded-full bg-white/5">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${pvmColor}`}
+            style={{ width: `${pvmProgress}%` }}
+          />
+        </div>
+        <div className="mt-2 flex justify-between text-xs text-muted">
+          <span>0 €</span>
+          <span className="text-emerald-accent">27 000 € (60%)</span>
+          <span className="text-yellow-accent">36 000 € (80%)</span>
+          <span>45 000 €</span>
+        </div>
+      </div>
+
+      {/* Next GPM Payment */}
+      {nextGPM && totalIncome > 0 && (
+        <div className="mb-6 rounded-2xl border border-emerald-border bg-emerald-muted/30 p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm text-muted">Kitas GPM avansinis mokėjimas</div>
+              <div className="text-lg font-bold">{nextGPM.label}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-muted">Liko {nextGPM.daysLeft} d.</div>
+              <div className="text-lg font-bold text-emerald-accent">
+                ~{formatCurrency(quarterlyGPM)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Monthly Inputs Grid */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {MONTHS.map((month, i) => (
+          <div key={month} className="rounded-xl border border-border bg-card p-4">
+            <label className="mb-2 block text-sm font-medium text-muted">
+              {month}
+            </label>
+            <div className="relative">
+              <input
+                type="number"
+                min={0}
+                value={monthlyIncomes[i] || ""}
+                placeholder="0"
+                onChange={(e) => updateMonth(i, Number(e.target.value))}
+                className="h-10 w-full rounded-lg border border-border bg-background px-3 pr-7 text-sm font-semibold outline-none transition-colors focus:border-emerald-accent"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">€</span>
+            </div>
+            {monthlyIncomes[i] > 0 && (
+              <div className="mt-2 space-y-0.5 text-xs text-muted">
+                <div className="flex justify-between">
+                  <span>Pajamos YTD</span>
+                  <span>{formatCurrency(runningTotals[i].income)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Mokesčiai YTD</span>
+                  <span className="text-red-accent">{formatCurrency(runningTotals[i].tax)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Grynasis YTD</span>
+                  <span className="text-emerald-accent">{formatCurrency(runningTotals[i].net)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );

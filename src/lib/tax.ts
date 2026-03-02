@@ -106,6 +106,86 @@ export function calculateTaxes(
   };
 }
 
+// MB (Mažoji bendrija) tax calculation
+export interface MBTaxOptions {
+  firstTwoYears: boolean;
+}
+
+export interface MBTaxResult {
+  income: number;
+  managerFee: number;
+  managerGPM: number;
+  managerVSD: number;
+  managerPSD: number;
+  managerNet: number;
+  corporateProfit: number;
+  corporateTax: number;
+  dividends: number;
+  dividendTax: number;
+  totalTax: number;
+  netIncome: number;
+  effectiveRate: number;
+}
+
+export function calculateMBTaxes(
+  annualIncome: number,
+  options: MBTaxOptions
+): MBTaxResult {
+  const c = TAX_CONSTANTS_2026;
+
+  // Manager fee: up to 12 VDU per year
+  const maxManagerFee = c.VDU_ANNUAL; // 12 * VDU monthly = VDU annual = €27,654
+  const managerFee = Math.min(annualIncome, maxManagerFee);
+
+  // Taxes on manager fee
+  const managerGPM = managerFee * 0.20;
+  const managerVSD = managerFee * 0.2081;
+  const psdMinAnnual = c.PSD_MINIMUM_MONTHLY * 12;
+  const managerPSD = managerFee > 0
+    ? Math.max(managerFee * c.PSD_RATE, psdMinAnnual)
+    : 0;
+  const managerNet = managerFee - managerGPM - managerVSD - managerPSD;
+
+  // Corporate profit (revenue minus manager fee)
+  const corporateProfit = Math.max(annualIncome - managerFee, 0);
+
+  // Corporate tax rate
+  let corporateTaxRate: number;
+  if (options.firstTwoYears && annualIncome <= 300000) {
+    corporateTaxRate = 0;
+  } else if (annualIncome <= 300000) {
+    corporateTaxRate = 0.07;
+  } else {
+    corporateTaxRate = 0.15;
+  }
+  const corporateTax = corporateProfit * corporateTaxRate;
+
+  // Dividends
+  const dividends = corporateProfit - corporateTax;
+  const dividendTax = dividends * 0.15;
+
+  // Totals
+  const totalTax = managerGPM + managerVSD + managerPSD + corporateTax + dividendTax;
+  const netIncome = managerNet + dividends - dividendTax;
+  const effectiveRate = annualIncome > 0 ? (totalTax / annualIncome) * 100 : 0;
+
+  return {
+    income: annualIncome,
+    managerFee,
+    managerGPM,
+    managerVSD,
+    managerPSD,
+    managerNet,
+    corporateProfit,
+    corporateTax,
+    dividends,
+    dividendTax,
+    totalTax,
+    netIncome,
+    effectiveRate,
+  };
+}
+
 export function formatCurrency(value: number): string {
   return value.toLocaleString("lt-LT", {
     minimumFractionDigits: 2,
