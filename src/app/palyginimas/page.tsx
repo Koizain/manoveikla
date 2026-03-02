@@ -22,7 +22,9 @@ export default function ComparisonPage() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.monthlyIncome) setMonthlyIncome(parsed.monthlyIncome);
+        if (typeof parsed.monthlyIncome === "number") {
+          setMonthlyIncome(Math.max(0, parsed.monthlyIncome));
+        }
         if (parsed.firstTwoYears !== undefined) setFirstTwoYears(parsed.firstTwoYears);
         if (typeof parsed.mbAdminCostMonthly === "number") {
           setMbAdminCostMonthly(Math.max(0, parsed.mbAdminCostMonthly));
@@ -55,6 +57,7 @@ export default function ComparisonPage() {
   const annualMbAdminCost = mbAdminCostMonthly * 12;
   const adjustedMbNetIncome = Math.max(mbResult.netIncome - annualMbAdminCost, 0);
   const adjustedMbTotalTax = mbResult.totalTax + annualMbAdminCost;
+  const adjustedMbEffectiveRate = annualIncome > 0 ? (adjustedMbTotalTax / annualIncome) * 100 : 0;
 
   const ivBetter = ivResult.netIncome >= adjustedMbNetIncome;
   const diff = Math.abs(adjustedMbNetIncome - ivResult.netIncome);
@@ -168,7 +171,7 @@ export default function ComparisonPage() {
           <ul className="space-y-1 text-sm text-muted">
             <li>• Šiuo pajamų lygiu IV palieka daugiau grynojo pelno po mokesčių.</li>
             <li>• MB administravimo kaštai sumažina MB naudą ({formatCurrency(annualMbAdminCost)}/metus).</li>
-            <li>• MB verta svarstyti augant pajamoms virš ~{formatCurrency(breakeven)}/mėn.</li>
+            <li>• {breakeven > 0 ? `MB verta svarstyti augant pajamoms virš ~${formatCurrency(breakeven)}/mėn.` : "Pagal dabartinius parametrus MB šiame pajamų intervale nėra palankesnis."}</li>
           </ul>
         ) : (
           <ul className="space-y-1 text-sm text-muted">
@@ -189,11 +192,17 @@ export default function ComparisonPage() {
                 <span className="font-bold text-emerald-accent">{formatCurrency(diff)}</span> per metus
                 ({formatCurrency(diffMonthly)}/mėn.)
               </>
-            ) : (
+            ) : breakeven > 0 ? (
               <>
                 Jei uždirbi daugiau nei{" "}
                 <span className="font-bold text-emerald-accent">{formatCurrency(breakeven)}/mėn.</span>
                 {" "}— <span className="font-bold text-emerald-accent">MB</span> tau sutaupytų{" "}
+                <span className="font-bold text-emerald-accent">{formatCurrency(diff)}</span> per metus
+                ({formatCurrency(diffMonthly)}/mėn.)
+              </>
+            ) : (
+              <>
+                Šiuo pajamų lygiu <span className="font-bold text-emerald-accent">MB</span> tau sutaupytų{" "}
                 <span className="font-bold text-emerald-accent">{formatCurrency(diff)}</span> per metus
                 ({formatCurrency(diffMonthly)}/mėn.)
               </>
@@ -279,7 +288,7 @@ export default function ComparisonPage() {
 
             <Divider />
             <Row label="Visi mokesčiai + administravimas" value={formatCurrency(adjustedMbTotalTax)} bold negative />
-            <Row label="Mokestinė našta" value={formatPercent(mbResult.effectiveRate)} />
+            <Row label="Mokestinė našta" value={formatPercent(adjustedMbEffectiveRate)} />
             <div className="rounded-xl bg-emerald-muted p-4">
               <Row label="Grynasis pelnas" value={formatCurrency(adjustedMbNetIncome)} bold highlight />
               <div className="mt-1 text-xs text-muted">
@@ -297,7 +306,7 @@ export default function ComparisonPage() {
           <li>IV skaičiavimas naudoja 30% standartinį sąnaudų atskaitymą.</li>
           <li>MB vadovo atlyginimas ribojamas iki 12 VDU (27 654 €/metus).</li>
           <li>MB pirmus 2 metus gali naudoti 0% pelno mokesčio tarifą (pajamos iki 300 000 €).</li>
-          <li>MB turi papildomų administravimo kaštų (buhalterija, registracija), kurie čia neįskaičiuoti.</li>
+          <li>MB administravimo kaštai įskaičiuojami pagal jūsų pasirinktą mėnesio sumą.</li>
           <li>Šis palyginimas yra supaprastintas — konsultuokitės su buhalteriu dėl individualios situacijos.</li>
         </ul>
       </div>

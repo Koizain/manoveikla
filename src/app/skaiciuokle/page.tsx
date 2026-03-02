@@ -23,17 +23,20 @@ const MONTHS = [
 
 function getNextGPMDeadline(): { label: string; date: Date; daysLeft: number } | null {
   const now = new Date();
+  now.setHours(0, 0, 0, 0);
   const year = now.getFullYear();
 
   for (const dl of GPM_DEADLINES) {
     const date = new Date(year, dl.month, dl.day);
+    date.setHours(0, 0, 0, 0);
     const diff = Math.ceil((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    if (diff > 0) {
+    if (diff >= 0) {
       return { label: dl.label, date, daysLeft: diff };
     }
   }
   // Next year Q1
   const nextQ1 = new Date(year + 1, 2, 15);
+  nextQ1.setHours(0, 0, 0, 0);
   const diff = Math.ceil((nextQ1.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
   return { label: "Kovo 15", date: nextQ1, daysLeft: diff };
 }
@@ -141,7 +144,7 @@ export default function CalculatorPage() {
         ? `Pasiruoškite GPM avansui iki ${nextGPM.label}`
         : "Pasitikrinkite artimiausią GPM terminą",
       description: nextGPM
-        ? `Prognozuojama suma: ~${formatCurrency(result.gpm / 4)}. Liko ${nextGPM.daysLeft} d.`
+        ? `Prognozuojama suma: ~${formatCurrency(result.gpm / 4)}. ${nextGPM.daysLeft === 0 ? "Terminas šiandien." : `Liko ${nextGPM.daysLeft} d.`}`
         : "Sekite ketvirtinius GPM avansinius mokėjimus.",
       level: nextGPM && nextGPM.daysLeft <= 14 ? "high" : "medium",
     },
@@ -570,7 +573,7 @@ function RunningTotalTracker({
               <div className="text-lg font-bold">{nextGPM.label}</div>
             </div>
             <div className="text-right">
-              <div className="text-sm text-muted">Liko {nextGPM.daysLeft} d.</div>
+              <div className="text-sm text-muted">{nextGPM.daysLeft === 0 ? "Terminas šiandien" : `Liko ${nextGPM.daysLeft} d.`}</div>
               <div className="text-lg font-bold text-emerald-accent">
                 ~{formatCurrency(quarterlyGPM)}
               </div>
