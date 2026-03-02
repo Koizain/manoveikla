@@ -9,6 +9,8 @@ import {
   type TaxOptions,
   type TaxResult,
 } from "@/lib/tax";
+import { GPM_DEADLINES } from "@/lib/deadlines";
+import { EMPTY_MONTHLY_INCOMES, parseMonthlyIncomes } from "@/lib/storage";
 
 const STORAGE_KEY = "manoveikla-inputs";
 const TRACKER_KEY = "manoveikla-tracker";
@@ -17,13 +19,6 @@ const MONTHS = [
   "Sausis", "Vasaris", "Kovas", "Balandis",
   "Gegužė", "Birželis", "Liepa", "Rugpjūtis",
   "Rugsėjis", "Spalis", "Lapkritis", "Gruodis",
-];
-
-const GPM_DEADLINES = [
-  { month: 2, day: 15, label: "Kovo 15" },     // Q1 - Mar 15
-  { month: 5, day: 15, label: "Birželio 15" },  // Q2 - Jun 15
-  { month: 8, day: 15, label: "Rugsėjo 15" },   // Q3 - Sep 15
-  { month: 11, day: 15, label: "Gruodžio 15" },  // Q4 - Dec 15
 ];
 
 function getNextGPMDeadline(): { label: string; date: Date; daysLeft: number } | null {
@@ -72,15 +67,12 @@ function loadInputs(): InputState {
 
 export default function CalculatorPage() {
   const [inputs, setInputs] = useState<InputState>(defaultInputs);
-  const [monthlyIncomes, setMonthlyIncomes] = useState<number[]>(new Array(12).fill(0));
+  const [monthlyIncomes, setMonthlyIncomes] = useState<number[]>([...EMPTY_MONTHLY_INCOMES]);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setInputs(loadInputs());
-    try {
-      const saved = localStorage.getItem(TRACKER_KEY);
-      if (saved) setMonthlyIncomes(JSON.parse(saved));
-    } catch {}
+    setMonthlyIncomes(parseMonthlyIncomes(localStorage.getItem(TRACKER_KEY)));
     setMounted(true);
   }, []);
 
@@ -141,6 +133,39 @@ export default function CalculatorPage() {
         : "bg-red-accent";
 
   const pvmProgress = Math.min((annualIncome / TAX_CONSTANTS_2026.PVM_THRESHOLD) * 100, 100);
+  const nextGPM = getNextGPMDeadline();
+
+  const actionItems = [
+    {
+      title: nextGPM
+        ? `Pasiruoškite GPM avansui iki ${nextGPM.label}`
+        : "Pasitikrinkite artimiausią GPM terminą",
+      description: nextGPM
+        ? `Prognozuojama suma: ~${formatCurrency(result.gpm / 4)}. Liko ${nextGPM.daysLeft} d.`
+        : "Sekite ketvirtinius GPM avansinius mokėjimus.",
+      level: nextGPM && nextGPM.daysLeft <= 14 ? "high" : "medium",
+    },
+    {
+      title:
+        pvmProgress >= 100
+          ? "Registruokitės PVM mokėtoju"
+          : pvmProgress >= 80
+            ? "Planuokite PVM registraciją"
+            : "Stebėkite PVM ribą",
+      description:
+        pvmProgress >= 100
+          ? "Viršyta 45 000 € riba — registracija būtina nedelsiant."
+          : pvmProgress >= 80
+            ? "Esate arti 45 000 € ribos, peržiūrėkite artimiausių mėnesių planą."
+            : "Kol kas rizika maža, bet verta tikrinti progresą kas mėnesį.",
+      level: pvmProgress >= 100 ? "high" : pvmProgress >= 80 ? "medium" : "low",
+    },
+    {
+      title: "Atsidėkite mokesčių rezervą",
+      description: `Rekomenduojama atsidėti ~${formatCurrency(display.totalTax)} ${inputs.period === "monthly" ? "per mėnesį" : "per metus"}.`,
+      level: "low",
+    },
+  ] as const;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
@@ -410,6 +435,32 @@ export default function CalculatorPage() {
                   ? "Artėjate prie PVM registracijos ribos"
                   : "Iki PVM registracijos ribos dar toli"}
             </p>
+          </div>
+
+          {/* Action Plan */}
+          <div className="rounded-2xl border border-emerald-border bg-emerald-muted/20 p-6">
+            <h3 className="mb-4 text-lg font-semibold">Ką daryti dabar?</h3>
+            <div className="space-y-3">
+              {actionItems.map((item) => (
+                <div key={item.title} className="rounded-xl border border-border bg-card/70 p-3">
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold">{item.title}</div>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        item.level === "high"
+                          ? "bg-red-accent/20 text-red-accent"
+                          : item.level === "medium"
+                            ? "bg-yellow-accent/20 text-yellow-accent"
+                            : "bg-emerald-accent/20 text-emerald-accent"
+                      }`}
+                    >
+                      {item.level === "high" ? "Aukštas" : item.level === "medium" ? "Vidutinis" : "Žemas"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted">{item.description}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
