@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0a0a0a;
+  --color-foreground: #fafafa;
+  --color-muted: #a1a1aa;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-card: #111111;
+  --color-card-hover: #1a1a1a;
+  --color-emerald-accent: #10b981;
+  --color-emerald-dark: #059669;
+  --color-emerald-light: #34d399;
+  --color-emerald-muted: rgba(16, 185, 129, 0.1);
+  --color-emerald-border: rgba(16, 185, 129, 0.2);
+  --color-yellow-accent: #f59e0b;
+  --color-red-accent: #ef4444;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Input number spinner removal */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Range slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  width: 100%;
+}
+
+input[type="range"]::-webkit-slider-track {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #10b981;
+  margin-top: -8px;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #10b981;
+  border: none;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
