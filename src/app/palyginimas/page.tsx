@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   calculateTaxes,
   calculateMBTaxes,
@@ -14,6 +14,7 @@ const STORAGE_KEY = "manoveikla-comparison";
 export default function ComparisonPage() {
   const [monthlyIncome, setMonthlyIncome] = useState(3000);
   const [firstTwoYears, setFirstTwoYears] = useState(true);
+  const [mbAdminCostMonthly, setMbAdminCostMonthly] = useState(120);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -21,8 +22,13 @@ export default function ComparisonPage() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.monthlyIncome) setMonthlyIncome(parsed.monthlyIncome);
+        if (typeof parsed.monthlyIncome === "number") {
+          setMonthlyIncome(Math.max(0, parsed.monthlyIncome));
+        }
         if (parsed.firstTwoYears !== undefined) setFirstTwoYears(parsed.firstTwoYears);
+        if (typeof parsed.mbAdminCostMonthly === "number") {
+          setMbAdminCostMonthly(Math.max(0, parsed.mbAdminCostMonthly));
+        }
       }
     } catch {}
     setMounted(true);
@@ -30,36 +36,44 @@ export default function ComparisonPage() {
 
   useEffect(() => {
     if (mounted) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ monthlyIncome, firstTwoYears }));
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ monthlyIncome, firstTwoYears, mbAdminCostMonthly })
+      );
     }
-  }, [monthlyIncome, firstTwoYears, mounted]);
+  }, [monthlyIncome, firstTwoYears, mbAdminCostMonthly, mounted]);
 
   const annualIncome = monthlyIncome * 12;
 
-  const ivOptions: TaxOptions = {
+  const ivOptions: TaxOptions = useMemo(() => ({
     expenseMethod: "30percent",
     actualExpenses: 0,
     additionalPension: false,
     employedElsewhere: false,
-  };
+  }), []);
   const ivResult = calculateTaxes(annualIncome, ivOptions);
   const mbResult = calculateMBTaxes(annualIncome, { firstTwoYears });
 
-  const ivBetter = ivResult.netIncome >= mbResult.netIncome;
-  const diff = Math.abs(mbResult.netIncome - ivResult.netIncome);
+  const annualMbAdminCost = mbAdminCostMonthly * 12;
+  const adjustedMbNetIncome = Math.max(mbResult.netIncome - annualMbAdminCost, 0);
+  const adjustedMbTotalTax = mbResult.totalTax + annualMbAdminCost;
+  const adjustedMbEffectiveRate = annualIncome > 0 ? (adjustedMbTotalTax / annualIncome) * 100 : 0;
+
+  const ivBetter = ivResult.netIncome >= adjustedMbNetIncome;
+  const diff = Math.abs(adjustedMbNetIncome - ivResult.netIncome);
   const diffMonthly = diff / 12;
 
-  // Find breakeven point
-  let breakeven = 0;
-  for (let m = 500; m <= 20000; m += 100) {
-    const annual = m * 12;
-    const iv = calculateTaxes(annual, ivOptions);
-    const mb = calculateMBTaxes(annual, { firstTwoYears });
-    if (mb.netIncome > iv.netIncome) {
-      breakeven = m;
-      break;
+  const breakeven = useMemo(() => {
+    for (let m = 500; m <= 20000; m += 100) {
+      const annual = m * 12;
+      const iv = calculateTaxes(annual, ivOptions);
+      const mb = calculateMBTaxes(annual, { firstTwoYears });
+      if (mb.netIncome - annualMbAdminCost > iv.netIncome) {
+        return m;
+      }
     }
-  }
+    return 0;
+  }, [firstTwoYears, ivOptions, annualMbAdminCost]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
@@ -127,6 +141,45 @@ export default function ComparisonPage() {
             </div>
           </button>
         </div>
+
+        <div className="mt-4">
+          <label className="mb-2 block text-sm font-medium text-muted">
+            MB administravimo kaštai / mėn.
+          </label>
+          <div className="relative">
+            <input
+              type="number"
+              min={0}
+              max={2000}
+              step={10}
+              value={mbAdminCostMonthly}
+              onChange={(e) => setMbAdminCostMonthly(Math.max(0, Number(e.target.value)))}
+              className="h-11 w-full rounded-xl border border-border bg-background px-4 pr-8 text-base font-semibold outline-none transition-colors focus:border-emerald-accent"
+            />
+            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted">€</span>
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            Įtraukiami buhalterijos, banko ir kiti administravimo kaštai ({formatCurrency(annualMbAdminCost)} per metus).
+          </p>
+        </div>
+      </div>
+
+      {/* Recommendation */}
+      <div className="mb-8 rounded-2xl border border-border bg-card p-5">
+        <h2 className="mb-2 text-lg font-semibold">Rekomendacija pagal jūsų situaciją</h2>
+        {ivBetter ? (
+          <ul className="space-y-1 text-sm text-muted">
+            <li>• Šiuo pajamų lygiu IV palieka daugiau grynojo pelno po mokesčių.</li>
+            <li>• MB administravimo kaštai sumažina MB naudą ({formatCurrency(annualMbAdminCost)}/metus).</li>
+            <li>• {breakeven > 0 ? `MB verta svarstyti augant pajamoms virš ~${formatCurrency(breakeven)}/mėn.` : "Pagal dabartinius parametrus MB šiame pajamų intervale nėra palankesnis."}</li>
+          </ul>
+        ) : (
+          <ul className="space-y-1 text-sm text-muted">
+            <li>• MB šiuo atveju palieka daugiau grynojo pelno net įtraukus administravimą.</li>
+            <li>• Prognozuojama nauda: {formatCurrency(diff)} per metus ({formatCurrency(diffMonthly)}/mėn.).</li>
+            <li>• Patikrinkite ar realūs MB administravimo kaštai atitinka įvestą sumą.</li>
+          </ul>
+        )}
       </div>
 
       {/* Savings banner */}
@@ -139,11 +192,17 @@ export default function ComparisonPage() {
                 <span className="font-bold text-emerald-accent">{formatCurrency(diff)}</span> per metus
                 ({formatCurrency(diffMonthly)}/mėn.)
               </>
-            ) : (
+            ) : breakeven > 0 ? (
               <>
                 Jei uždirbi daugiau nei{" "}
                 <span className="font-bold text-emerald-accent">{formatCurrency(breakeven)}/mėn.</span>
                 {" "}— <span className="font-bold text-emerald-accent">MB</span> tau sutaupytų{" "}
+                <span className="font-bold text-emerald-accent">{formatCurrency(diff)}</span> per metus
+                ({formatCurrency(diffMonthly)}/mėn.)
+              </>
+            ) : (
+              <>
+                Šiuo pajamų lygiu <span className="font-bold text-emerald-accent">MB</span> tau sutaupytų{" "}
                 <span className="font-bold text-emerald-accent">{formatCurrency(diff)}</span> per metus
                 ({formatCurrency(diffMonthly)}/mėn.)
               </>
@@ -228,12 +287,12 @@ export default function ComparisonPage() {
             </div>
 
             <Divider />
-            <Row label="Visi mokesčiai" value={formatCurrency(mbResult.totalTax)} bold negative />
-            <Row label="Mokestinė našta" value={formatPercent(mbResult.effectiveRate)} />
+            <Row label="Visi mokesčiai + administravimas" value={formatCurrency(adjustedMbTotalTax)} bold negative />
+            <Row label="Mokestinė našta" value={formatPercent(adjustedMbEffectiveRate)} />
             <div className="rounded-xl bg-emerald-muted p-4">
-              <Row label="Grynasis pelnas" value={formatCurrency(mbResult.netIncome)} bold highlight />
+              <Row label="Grynasis pelnas" value={formatCurrency(adjustedMbNetIncome)} bold highlight />
               <div className="mt-1 text-xs text-muted">
-                {formatCurrency(mbResult.netIncome / 12)} / mėn.
+                {formatCurrency(adjustedMbNetIncome / 12)} / mėn.
               </div>
             </div>
           </div>
@@ -247,7 +306,7 @@ export default function ComparisonPage() {
           <li>IV skaičiavimas naudoja 30% standartinį sąnaudų atskaitymą.</li>
           <li>MB vadovo atlyginimas ribojamas iki 12 VDU (27 654 €/metus).</li>
           <li>MB pirmus 2 metus gali naudoti 0% pelno mokesčio tarifą (pajamos iki 300 000 €).</li>
-          <li>MB turi papildomų administravimo kaštų (buhalterija, registracija), kurie čia neįskaičiuoti.</li>
+          <li>MB administravimo kaštai įskaičiuojami pagal jūsų pasirinktą mėnesio sumą.</li>
           <li>Šis palyginimas yra supaprastintas — konsultuokitės su buhalteriu dėl individualios situacijos.</li>
         </ul>
       </div>

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { calculateTaxes, formatCurrency, TAX_CONSTANTS_2026, type TaxOptions } from "@/lib/tax";
+import { GPM_DEADLINES } from "@/lib/deadlines";
+import { parseMonthlyIncomes } from "@/lib/storage";
 
 const TRACKER_KEY = "manoveikla-tracker";
 
@@ -15,14 +17,9 @@ interface Deadline {
 
 const deadlineTemplates: Deadline[] = [
   // GPM quarterly
-  ...[
-    { month: 2, day: 15, quarter: "I" },
-    { month: 5, day: 15, quarter: "II" },
-    { month: 8, day: 15, quarter: "III" },
-    { month: 11, day: 15, quarter: "IV" },
-  ].map(({ month, day, quarter }) => ({
-    title: `GPM avansas (${quarter} ketv.)`,
-    description: `${quarter}-ojo ketvirčio GPM avansinis mokėjimas`,
+  ...GPM_DEADLINES.map(({ month, day }, index) => ({
+    title: `GPM avansas (${index + 1} ketv.)`,
+    description: `${index + 1}-ojo ketvirčio GPM avansinis mokėjimas`,
     type: "gpm" as const,
     getDate: (year: number) => new Date(year, month, day),
     getAmount: (annualIncome: number, options: TaxOptions) => {
@@ -133,26 +130,23 @@ export default function DeadlinesPage() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(TRACKER_KEY);
-      if (saved) {
-        const months: number[] = JSON.parse(saved);
-        setAnnualIncome(months.reduce((a: number, b: number) => a + b, 0));
-      }
-    } catch {}
+    const months = parseMonthlyIncomes(localStorage.getItem(TRACKER_KEY));
+    setAnnualIncome(months.reduce((a, b) => a + b, 0));
     setMounted(true);
   }, []);
 
-  const now = new Date();
-  const year = now.getFullYear();
+  const year = useMemo(() => new Date().getFullYear(), []);
   const showPVM = annualIncome >= TAX_CONSTANTS_2026.PVM_THRESHOLD * 0.7;
 
-  const options: TaxOptions = {
-    expenseMethod: "30percent",
-    actualExpenses: 0,
-    additionalPension: false,
-    employedElsewhere: false,
-  };
+  const options: TaxOptions = useMemo(
+    () => ({
+      expenseMethod: "30percent",
+      actualExpenses: 0,
+      additionalPension: false,
+      employedElsewhere: false,
+    }),
+    []
+  );
 
   const deadlines = useMemo(() => {
     const items = deadlineTemplates
@@ -178,8 +172,7 @@ export default function DeadlinesPage() {
     const past = items.filter((d) => d.daysLeft < 0);
     const future = items.filter((d) => d.daysLeft >= 0).slice(0, 20);
     return [...past, ...future];
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, showPVM, annualIncome]);
+  }, [year, showPVM, annualIncome, options]);
 
   const filtered = filter === "all" ? deadlines : deadlines.filter((d) => d.type === filter);
 
@@ -187,7 +180,7 @@ export default function DeadlinesPage() {
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
       <div className="mb-8">
         <h1 className="text-2xl font-bold sm:text-3xl">
-          Mokesčių terminai 2026
+          Mokesčių terminai
         </h1>
         <p className="mt-2 text-muted">
           Artimiausi mokesčių terminai — surikiuoti pagal datą
