@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { calculateTaxes, formatCurrency, TAX_CONSTANTS_2026, type TaxOptions } from "@/lib/tax";
 import { GPM_DEADLINES } from "@/lib/deadlines";
 import { parseMonthlyIncomes } from "@/lib/storage";
@@ -122,6 +122,17 @@ function getCountdownText(daysLeft: number): { text: string; className: string }
   return { text: `Liko ${daysLeft} d.`, className: "text-emerald-accent" };
 }
 
+function formatICSDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}${m}${d}`;
+}
+
+function generateUID(date: Date, title: string): string {
+  return `${formatICSDate(date)}-${title.replace(/\s+/g, "-").toLowerCase()}@manoveikla.lt`;
+}
+
 type FilterType = "all" | "gpm" | "sodra" | "declaration" | "pvm";
 
 export default function DeadlinesPage() {
@@ -176,6 +187,52 @@ export default function DeadlinesPage() {
 
   const filtered = filter === "all" ? deadlines : deadlines.filter((d) => d.type === filter);
 
+  const handleExportICS = useCallback(() => {
+    const events = deadlines
+      .filter((d) => d.daysLeft >= 0)
+      .map((d) => {
+        const dtStart = formatICSDate(d.date);
+        const dtEnd = formatICSDate(new Date(d.date.getTime() + 86400000));
+        const alarmDate = new Date(d.date);
+        alarmDate.setDate(alarmDate.getDate() - 3);
+        const uid = generateUID(d.date, d.title);
+        return [
+          "BEGIN:VEVENT",
+          `UID:${uid}`,
+          `DTSTART;VALUE=DATE:${dtStart}`,
+          `DTEND;VALUE=DATE:${dtEnd}`,
+          `SUMMARY:Mokesčių terminas: ${d.title}`,
+          `DESCRIPTION:${d.description}`,
+          "BEGIN:VALARM",
+          "TRIGGER:-P3D",
+          "ACTION:DISPLAY",
+          `DESCRIPTION:Mokesčių terminas: ${d.title} po 3 dienų`,
+          "END:VALARM",
+          "END:VEVENT",
+        ].join("\r\n");
+      });
+
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//manoveikla.lt//Mokesčių terminai//LT",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      ...events,
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mokesciu-terminai-${year}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [deadlines, year]);
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
       <div className="mb-8">
@@ -185,6 +242,22 @@ export default function DeadlinesPage() {
         <p className="mt-2 text-muted">
           Artimiausi mokesčių terminai — surikiuoti pagal datą
         </p>
+      </div>
+
+      {/* iCal Export */}
+      <div className="mb-6">
+        <button
+          onClick={handleExportICS}
+          className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-muted transition-all hover:border-foreground/20 hover:text-foreground"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+          </svg>
+          Eksportuoti į kalendorių (.ics)
+        </button>
       </div>
 
       {/* Filter pills */}

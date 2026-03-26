@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   calculateTaxes,
   formatCurrency,
@@ -68,13 +68,67 @@ function loadInputs(): InputState {
   return defaultInputs;
 }
 
+function loadInputsFromURL(): Partial<InputState> | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("income")) return null;
+  const result: Partial<InputState> = {};
+  const income = params.get("income");
+  if (income) result.monthlyIncome = Number(income);
+  const method = params.get("method");
+  if (method === "30percent" || method === "actual") result.expenseMethod = method;
+  const pension = params.get("pension");
+  if (pension !== null) result.additionalPension = pension === "true";
+  const employed = params.get("employed");
+  if (employed !== null) result.employedElsewhere = employed === "true";
+  const expenses = params.get("expenses");
+  if (expenses) result.actualExpenses = Number(expenses);
+  return result;
+}
+
+function findGrossForNet(targetNet: number, options: TaxOptions): { gross: number; result: TaxResult } {
+  let low = 0;
+  let high = targetNet * 3;
+  let bestResult = calculateTaxes(0, options);
+
+  for (let i = 0; i < 100; i++) {
+    const mid = (low + high) / 2;
+    const result = calculateTaxes(mid, options);
+    if (Math.abs(result.netIncome - targetNet) < 1) {
+      return { gross: mid, result };
+    }
+    if (result.netIncome < targetNet) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+    bestResult = result;
+  }
+  return { gross: (low + high) / 2, result: bestResult };
+}
+
+type TabType = "calculator" | "reverse";
+
 export default function CalculatorPage() {
   const [inputs, setInputs] = useState<InputState>(defaultInputs);
   const [monthlyIncomes, setMonthlyIncomes] = useState<number[]>([...EMPTY_MONTHLY_INCOMES]);
   const [mounted, setMounted] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>("calculator");
+  const [copied, setCopied] = useState(false);
+
+  // Reverse calculator state
+  const [reverseNet, setReverseNet] = useState(2000);
+  const [reverseExpenseMethod, setReverseExpenseMethod] = useState<"30percent" | "actual">("30percent");
+  const [reversePension, setReversePension] = useState(false);
+  const [reverseEmployed, setReverseEmployed] = useState(false);
 
   useEffect(() => {
-    setInputs(loadInputs());
+    const urlInputs = loadInputsFromURL();
+    if (urlInputs) {
+      setInputs((prev) => ({ ...prev, ...urlInputs }));
+    } else {
+      setInputs(loadInputs());
+    }
     setMonthlyIncomes(parseMonthlyIncomes(localStorage.getItem(TRACKER_KEY)));
     setMounted(true);
   }, []);
@@ -97,6 +151,21 @@ export default function CalculatorPage() {
     },
     []
   );
+
+  const handleCopyLink = useCallback(() => {
+    const params = new URLSearchParams();
+    params.set("income", String(inputs.monthlyIncome));
+    params.set("method", inputs.expenseMethod);
+    params.set("pension", String(inputs.additionalPension));
+    params.set("employed", String(inputs.employedElsewhere));
+    if (inputs.expenseMethod === "actual" && inputs.actualExpenses > 0) {
+      params.set("expenses", String(inputs.actualExpenses));
+    }
+    const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [inputs]);
 
   const annualIncome = inputs.monthlyIncome * 12;
   const options: TaxOptions = {
@@ -137,6 +206,39 @@ export default function CalculatorPage() {
 
   const pvmProgress = Math.min((annualIncome / TAX_CONSTANTS_2026.PVM_THRESHOLD) * 100, 100);
   const nextGPM = getNextGPMDeadline();
+
+  // Expense optimizer hint
+  const expenseOptimizerHint = useMemo(() => {
+    if (annualIncome <= 0) return null;
+    const threshold = annualIncome * TAX_CONSTANTS_2026.EXPENSE_DEDUCTION;
+    return {
+      annualIncome,
+      threshold,
+    };
+  }, [annualIncome]);
+
+  // Reverse calculator
+  const reverseOptions: TaxOptions = useMemo(() => ({
+    expenseMethod: reverseExpenseMethod,
+    actualExpenses: 0,
+    additionalPension: reversePension,
+    employedElsewhere: reverseEmployed,
+  }), [reverseExpenseMethod, reversePension, reverseEmployed]);
+
+  const reverseResult = useMemo(() => {
+    const annualTarget = reverseNet * 12;
+    const { gross, result: taxResult } = findGrossForNet(annualTarget, reverseOptions);
+    return {
+      monthlyGross: gross / 12,
+      annualGross: gross,
+      gpm: taxResult.gpm,
+      vsd: taxResult.vsd,
+      psd: taxResult.psd,
+      totalTax: taxResult.totalTax,
+      effectiveRate: taxResult.effectiveRate,
+      netIncome: taxResult.netIncome,
+    };
+  }, [reverseNet, reverseOptions]);
 
   const actionItems = [
     {
@@ -181,299 +283,501 @@ export default function CalculatorPage() {
         </p>
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-[380px_1fr]">
-        {/* Input Panel */}
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-border bg-card p-6">
-            <h2 className="mb-5 text-lg font-semibold">Parametrai</h2>
+      {/* Tab Selector */}
+      <div className="mb-8 flex gap-2">
+        <button
+          onClick={() => setActiveTab("calculator")}
+          className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-all ${
+            activeTab === "calculator"
+              ? "bg-emerald-accent text-black"
+              : "border border-border text-muted hover:text-foreground"
+          }`}
+        >
+          Skaičiuoklė
+        </button>
+        <button
+          onClick={() => setActiveTab("reverse")}
+          className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-all ${
+            activeTab === "reverse"
+              ? "bg-emerald-accent text-black"
+              : "border border-border text-muted hover:text-foreground"
+          }`}
+        >
+          Kiek fakturuoti?
+        </button>
+      </div>
 
-            {/* Monthly Income */}
-            <div className="mb-6">
-              <label className="mb-2 block text-sm font-medium text-muted">
-                Mėnesinės pajamos
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  min={0}
-                  max={100000}
-                  value={inputs.monthlyIncome}
-                  onChange={(e) =>
-                    update(
-                      "monthlyIncome",
-                      Math.max(0, Number(e.target.value))
-                    )
-                  }
-                  className="h-12 w-full rounded-xl border border-border bg-background px-4 pr-8 text-lg font-semibold outline-none transition-colors focus:border-emerald-accent"
-                />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted">
-                  €
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={20000}
-                step={100}
-                value={inputs.monthlyIncome}
-                onChange={(e) =>
-                  update("monthlyIncome", Number(e.target.value))
-                }
-                className="mt-3 w-full"
-              />
-              <div className="mt-1 flex justify-between text-xs text-muted">
-                <span>0 €</span>
-                <span>20 000 €</span>
-              </div>
-            </div>
+      {activeTab === "reverse" ? (
+        /* Reverse Calculator Tab */
+        <div className="grid gap-8 lg:grid-cols-[380px_1fr]">
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-border bg-card p-6">
+              <h2 className="mb-5 text-lg font-semibold">Norimas grynasis atlyginimas</h2>
 
-            {/* Expense Method */}
-            <div className="mb-6">
-              <label className="mb-2 block text-sm font-medium text-muted">
-                Sąnaudų metodas
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => update("expenseMethod", "30percent")}
-                  className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
-                    inputs.expenseMethod === "30percent"
-                      ? "border-emerald-accent bg-emerald-muted text-emerald-accent"
-                      : "border-border text-muted hover:border-foreground/20"
-                  }`}
-                >
-                  30% standartinis
-                </button>
-                <button
-                  onClick={() => update("expenseMethod", "actual")}
-                  className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
-                    inputs.expenseMethod === "actual"
-                      ? "border-emerald-accent bg-emerald-muted text-emerald-accent"
-                      : "border-border text-muted hover:border-foreground/20"
-                  }`}
-                >
-                  Faktinės sąnaudos
-                </button>
-              </div>
-            </div>
-
-            {/* Actual Expenses */}
-            {inputs.expenseMethod === "actual" && (
               <div className="mb-6">
                 <label className="mb-2 block text-sm font-medium text-muted">
-                  Faktinės sąnaudos per mėn.
+                  Grynos pajamos per mėnesį
                 </label>
                 <div className="relative">
                   <input
                     type="number"
-                    min={0}
-                    value={inputs.actualExpenses}
-                    onChange={(e) =>
-                      update(
-                        "actualExpenses",
-                        Math.max(0, Number(e.target.value))
-                      )
-                    }
+                    min={500}
+                    max={10000}
+                    value={reverseNet}
+                    onChange={(e) => setReverseNet(Math.max(500, Math.min(10000, Number(e.target.value))))}
                     className="h-12 w-full rounded-xl border border-border bg-background px-4 pr-8 text-lg font-semibold outline-none transition-colors focus:border-emerald-accent"
                   />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted">
-                    €
-                  </span>
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted">€</span>
+                </div>
+                <input
+                  type="range"
+                  min={500}
+                  max={10000}
+                  step={50}
+                  value={reverseNet}
+                  onChange={(e) => setReverseNet(Number(e.target.value))}
+                  className="mt-3 w-full"
+                />
+                <div className="mt-1 flex justify-between text-xs text-muted">
+                  <span>500 €</span>
+                  <span>10 000 €</span>
                 </div>
               </div>
-            )}
 
-            {/* Toggles */}
-            <div className="space-y-4">
-              <Toggle
-                label="Kaupiate pensijai papildomai?"
-                description="Prideda 3% pensijų kaupimo įmoką"
-                checked={inputs.additionalPension}
-                onChange={(v) => update("additionalPension", v)}
-              />
-              <Toggle
-                label="Dirbate samdoje?"
-                description="PSD jau mokamas per darbdavį"
-                checked={inputs.employedElsewhere}
-                onChange={(v) => update("employedElsewhere", v)}
-              />
-            </div>
-          </div>
-
-          {/* Period Selector */}
-          <div className="rounded-2xl border border-border bg-card p-4">
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => update("period", "monthly")}
-                className={`rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
-                  inputs.period === "monthly"
-                    ? "bg-emerald-accent text-black"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                Mėnesinis
-              </button>
-              <button
-                onClick={() => update("period", "annual")}
-                className={`rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
-                  inputs.period === "annual"
-                    ? "bg-emerald-accent text-black"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                Metinis
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Results Panel */}
-        <div className="space-y-6">
-          {/* Key Metrics */}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <MetricCard
-              label="Pajamos"
-              value={formatCurrency(display.income)}
-              icon="📊"
-            />
-            <MetricCard
-              label="Sąnaudos"
-              value={formatCurrency(display.expenses)}
-              icon="📉"
-              sublabel={
-                inputs.expenseMethod === "30percent"
-                  ? "30% standartinis atskaitymas"
-                  : "Faktinės sąnaudos"
-              }
-            />
-            <MetricCard
-              label="Apmokestinamos pajamos"
-              value={formatCurrency(display.taxableIncome)}
-              icon="💰"
-            />
-            <MetricCard
-              label="Grynasis pelnas"
-              value={formatCurrency(display.netIncome)}
-              icon="✅"
-              highlight
-            />
-          </div>
-
-          {/* Tax Breakdown */}
-          <div className="rounded-2xl border border-border bg-card p-6">
-            <h3 className="mb-4 text-lg font-semibold">Mokesčių išskaidymas</h3>
-            <div className="space-y-4">
-              <TaxRow
-                label="GPM (gyventojų pajamų mokestis)"
-                value={display.gpm}
-                rate="20%"
-                total={display.totalTax}
-              />
-              <TaxRow
-                label="VSD (socialinis draudimas)"
-                value={display.vsd}
-                rate={
-                  inputs.additionalPension ? "15,52%" : "12,52%"
-                }
-                total={display.totalTax}
-              />
-              <TaxRow
-                label="PSD (sveikatos draudimas)"
-                value={display.psd}
-                rate={inputs.employedElsewhere ? "0%" : "6,98%"}
-                total={display.totalTax}
-              />
-              <div className="border-t border-border pt-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold">Visi mokesčiai</span>
-                  <span className="text-xl font-bold">
-                    {formatCurrency(display.totalTax)}
-                  </span>
+              <div className="mb-6">
+                <label className="mb-2 block text-sm font-medium text-muted">
+                  Sąnaudų metodas
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setReverseExpenseMethod("30percent")}
+                    className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
+                      reverseExpenseMethod === "30percent"
+                        ? "border-emerald-accent bg-emerald-muted text-emerald-accent"
+                        : "border-border text-muted hover:border-foreground/20"
+                    }`}
+                  >
+                    30% standartinis
+                  </button>
+                  <button
+                    onClick={() => setReverseExpenseMethod("actual")}
+                    className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
+                      reverseExpenseMethod === "actual"
+                        ? "border-emerald-accent bg-emerald-muted text-emerald-accent"
+                        : "border-border text-muted hover:border-foreground/20"
+                    }`}
+                  >
+                    Faktinės sąnaudos
+                  </button>
                 </div>
+              </div>
+
+              <div className="space-y-4">
+                <Toggle
+                  label="Kaupiate pensijai papildomai?"
+                  description="Prideda 3% pensijų kaupimo įmoką"
+                  checked={reversePension}
+                  onChange={setReversePension}
+                />
+                <Toggle
+                  label="Dirbate samdoje?"
+                  description="PSD jau mokamas per darbdavį"
+                  checked={reverseEmployed}
+                  onChange={setReverseEmployed}
+                />
               </div>
             </div>
           </div>
 
-          {/* Tax Burden Gauge */}
-          <div className="rounded-2xl border border-border bg-card p-6">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-lg font-semibold">Mokestinė našta</h3>
-              <span className={`text-2xl font-bold ${burdenColor}`}>
-                {formatPercent(display.effectiveRate)}
-              </span>
-            </div>
-            <div className="h-3 overflow-hidden rounded-full bg-white/5">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${burdenBarColor}`}
-                style={{ width: `${Math.min(display.effectiveRate, 50) * 2}%` }}
+          <div className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <MetricCard
+                label="Reikia fakturuoti per mėnesį"
+                value={formatCurrency(reverseResult.monthlyGross)}
+                icon="📤"
+                highlight
+              />
+              <MetricCard
+                label="Reikia fakturuoti per metus"
+                value={formatCurrency(reverseResult.annualGross)}
+                icon="📊"
+              />
+              <MetricCard
+                label="Grynos pajamos per mėnesį"
+                value={formatCurrency(reverseResult.netIncome / 12)}
+                icon="✅"
+              />
+              <MetricCard
+                label="Efektyvus mokesčių tarifas"
+                value={formatPercent(reverseResult.effectiveRate)}
+                icon="📉"
               />
             </div>
-            <div className="mt-2 flex justify-between text-xs text-muted">
-              <span>0%</span>
-              <span className="text-emerald-accent">20%</span>
-              <span className="text-yellow-accent">30%</span>
-              <span>50%</span>
-            </div>
-          </div>
 
-          {/* PVM Tracker */}
-          <div className="rounded-2xl border border-border bg-card p-6">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-lg font-semibold">PVM registracijos riba</h3>
-              <span className="text-sm text-muted">
-                {formatCurrency(annualIncome)} / {formatCurrency(TAX_CONSTANTS_2026.PVM_THRESHOLD)}
-              </span>
-            </div>
-            <div className="h-3 overflow-hidden rounded-full bg-white/5">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  pvmProgress >= 100 ? "bg-red-accent" : pvmProgress >= 80 ? "bg-yellow-accent" : "bg-emerald-accent"
-                }`}
-                style={{ width: `${pvmProgress}%` }}
-              />
-            </div>
-            <p className="mt-2 text-xs text-muted">
-              {pvmProgress >= 100
-                ? "Viršyta 45 000 € riba — privalote registruotis PVM mokėtoju"
-                : pvmProgress >= 80
-                  ? "Artėjate prie PVM registracijos ribos"
-                  : "Iki PVM registracijos ribos dar toli"}
-            </p>
-          </div>
-
-          {/* Action Plan */}
-          <div className="rounded-2xl border border-emerald-border bg-emerald-muted/20 p-6">
-            <h3 className="mb-4 text-lg font-semibold">Ką daryti dabar?</h3>
-            <div className="space-y-3">
-              {actionItems.map((item) => (
-                <div key={item.title} className="rounded-xl border border-border bg-card/70 p-3">
-                  <div className="mb-1 flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold">{item.title}</div>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        item.level === "high"
-                          ? "bg-red-accent/20 text-red-accent"
-                          : item.level === "medium"
-                            ? "bg-yellow-accent/20 text-yellow-accent"
-                            : "bg-emerald-accent/20 text-emerald-accent"
-                      }`}
-                    >
-                      {item.level === "high" ? "Aukštas" : item.level === "medium" ? "Vidutinis" : "Žemas"}
+            <div className="rounded-2xl border border-border bg-card p-6">
+              <h3 className="mb-4 text-lg font-semibold">Mokesčių išskaidymas (metinis)</h3>
+              <div className="space-y-4">
+                <TaxRow
+                  label="GPM (gyventojų pajamų mokestis)"
+                  value={reverseResult.gpm}
+                  rate="20%"
+                  total={reverseResult.totalTax}
+                />
+                <TaxRow
+                  label="VSD (socialinis draudimas)"
+                  value={reverseResult.vsd}
+                  rate={reversePension ? "15,52%" : "12,52%"}
+                  total={reverseResult.totalTax}
+                />
+                <TaxRow
+                  label="PSD (sveikatos draudimas)"
+                  value={reverseResult.psd}
+                  rate={reverseEmployed ? "0%" : "6,98%"}
+                  total={reverseResult.totalTax}
+                />
+                <div className="border-t border-border pt-4">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">Visi mokesčiai per metus</span>
+                    <span className="text-xl font-bold">
+                      {formatCurrency(reverseResult.totalTax)}
                     </span>
                   </div>
-                  <p className="text-xs text-muted">{item.description}</p>
+                  <div className="mt-2 flex items-center justify-between text-sm text-muted">
+                    <span>Mokesčiai per mėnesį</span>
+                    <span className="font-semibold">
+                      {formatCurrency(reverseResult.totalTax / 12)}
+                    </span>
+                  </div>
                 </div>
-              ))}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : (
+        /* Main Calculator Tab */
+        <>
+          <div className="grid gap-8 lg:grid-cols-[380px_1fr]">
+            {/* Input Panel */}
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-border bg-card p-6">
+                <div className="mb-5 flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Parametrai</h2>
+                  <button
+                    onClick={handleCopyLink}
+                    className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted transition-all hover:border-foreground/20 hover:text-foreground"
+                    title="Kopijuoti nuorodą"
+                  >
+                    {copied ? (
+                      <span className="text-emerald-accent">Nukopijuota!</span>
+                    ) : (
+                      <>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                          <polyline points="16 6 12 2 8 6" />
+                          <line x1="12" y1="2" x2="12" y2="15" />
+                        </svg>
+                        Kopijuoti nuorodą
+                      </>
+                    )}
+                  </button>
+                </div>
 
-      {/* Running Total Tracker */}
-      <RunningTotalTracker
-        monthlyIncomes={monthlyIncomes}
-        setMonthlyIncomes={setMonthlyIncomes}
-        options={options}
-      />
+                {/* Monthly Income */}
+                <div className="mb-6">
+                  <label className="mb-2 block text-sm font-medium text-muted">
+                    Mėnesinės pajamos
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100000}
+                      value={inputs.monthlyIncome}
+                      onChange={(e) =>
+                        update(
+                          "monthlyIncome",
+                          Math.max(0, Number(e.target.value))
+                        )
+                      }
+                      className="h-12 w-full rounded-xl border border-border bg-background px-4 pr-8 text-lg font-semibold outline-none transition-colors focus:border-emerald-accent"
+                    />
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted">
+                      €
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={20000}
+                    step={100}
+                    value={inputs.monthlyIncome}
+                    onChange={(e) =>
+                      update("monthlyIncome", Number(e.target.value))
+                    }
+                    className="mt-3 w-full"
+                  />
+                  <div className="mt-1 flex justify-between text-xs text-muted">
+                    <span>0 €</span>
+                    <span>20 000 €</span>
+                  </div>
+                </div>
+
+                {/* Expense Method */}
+                <div className="mb-6">
+                  <label className="mb-2 block text-sm font-medium text-muted">
+                    Sąnaudų metodas
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => update("expenseMethod", "30percent")}
+                      className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
+                        inputs.expenseMethod === "30percent"
+                          ? "border-emerald-accent bg-emerald-muted text-emerald-accent"
+                          : "border-border text-muted hover:border-foreground/20"
+                      }`}
+                    >
+                      30% standartinis
+                    </button>
+                    <button
+                      onClick={() => update("expenseMethod", "actual")}
+                      className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
+                        inputs.expenseMethod === "actual"
+                          ? "border-emerald-accent bg-emerald-muted text-emerald-accent"
+                          : "border-border text-muted hover:border-foreground/20"
+                      }`}
+                    >
+                      Faktinės sąnaudos
+                    </button>
+                  </div>
+
+                  {/* Expense Optimizer Hint */}
+                  {expenseOptimizerHint && (
+                    <p className="mt-3 rounded-lg bg-emerald-muted/30 px-3 py-2 text-xs text-muted">
+                      Jūsų pajamoms ({formatCurrency(expenseOptimizerHint.annualIncome)}/metus) apsimoka fiksuoti faktines sąnaudas jei jos viršija {formatCurrency(expenseOptimizerHint.threshold)}
+                    </p>
+                  )}
+                </div>
+
+                {/* Actual Expenses */}
+                {inputs.expenseMethod === "actual" && (
+                  <div className="mb-6">
+                    <label className="mb-2 block text-sm font-medium text-muted">
+                      Faktinės sąnaudos per mėn.
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min={0}
+                        value={inputs.actualExpenses}
+                        onChange={(e) =>
+                          update(
+                            "actualExpenses",
+                            Math.max(0, Number(e.target.value))
+                          )
+                        }
+                        className="h-12 w-full rounded-xl border border-border bg-background px-4 pr-8 text-lg font-semibold outline-none transition-colors focus:border-emerald-accent"
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted">
+                        €
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Toggles */}
+                <div className="space-y-4">
+                  <Toggle
+                    label="Kaupiate pensijai papildomai?"
+                    description="Prideda 3% pensijų kaupimo įmoką"
+                    checked={inputs.additionalPension}
+                    onChange={(v) => update("additionalPension", v)}
+                  />
+                  <Toggle
+                    label="Dirbate samdoje?"
+                    description="PSD jau mokamas per darbdavį"
+                    checked={inputs.employedElsewhere}
+                    onChange={(v) => update("employedElsewhere", v)}
+                  />
+                </div>
+              </div>
+
+              {/* Period Selector */}
+              <div className="rounded-2xl border border-border bg-card p-4">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => update("period", "monthly")}
+                    className={`rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
+                      inputs.period === "monthly"
+                        ? "bg-emerald-accent text-black"
+                        : "text-muted hover:text-foreground"
+                    }`}
+                  >
+                    Mėnesinis
+                  </button>
+                  <button
+                    onClick={() => update("period", "annual")}
+                    className={`rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
+                      inputs.period === "annual"
+                        ? "bg-emerald-accent text-black"
+                        : "text-muted hover:text-foreground"
+                    }`}
+                  >
+                    Metinis
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Results Panel */}
+            <div className="space-y-6">
+              {/* Key Metrics */}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <MetricCard
+                  label="Pajamos"
+                  value={formatCurrency(display.income)}
+                  icon="📊"
+                />
+                <MetricCard
+                  label="Sąnaudos"
+                  value={formatCurrency(display.expenses)}
+                  icon="📉"
+                  sublabel={
+                    inputs.expenseMethod === "30percent"
+                      ? "30% standartinis atskaitymas"
+                      : "Faktinės sąnaudos"
+                  }
+                />
+                <MetricCard
+                  label="Apmokestinamos pajamos"
+                  value={formatCurrency(display.taxableIncome)}
+                  icon="💰"
+                />
+                <MetricCard
+                  label="Grynasis pelnas"
+                  value={formatCurrency(display.netIncome)}
+                  icon="✅"
+                  highlight
+                />
+              </div>
+
+              {/* Tax Breakdown */}
+              <div className="rounded-2xl border border-border bg-card p-6">
+                <h3 className="mb-4 text-lg font-semibold">Mokesčių išskaidymas</h3>
+                <div className="space-y-4">
+                  <TaxRow
+                    label="GPM (gyventojų pajamų mokestis)"
+                    value={display.gpm}
+                    rate="20%"
+                    total={display.totalTax}
+                  />
+                  <TaxRow
+                    label="VSD (socialinis draudimas)"
+                    value={display.vsd}
+                    rate={
+                      inputs.additionalPension ? "15,52%" : "12,52%"
+                    }
+                    total={display.totalTax}
+                  />
+                  <TaxRow
+                    label="PSD (sveikatos draudimas)"
+                    value={display.psd}
+                    rate={inputs.employedElsewhere ? "0%" : "6,98%"}
+                    total={display.totalTax}
+                  />
+                  <div className="border-t border-border pt-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold">Visi mokesčiai</span>
+                      <span className="text-xl font-bold">
+                        {formatCurrency(display.totalTax)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tax Burden Gauge */}
+              <div className="rounded-2xl border border-border bg-card p-6">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Mokestinė našta</h3>
+                  <span className={`text-2xl font-bold ${burdenColor}`}>
+                    {formatPercent(display.effectiveRate)}
+                  </span>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full bg-white/5">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${burdenBarColor}`}
+                    style={{ width: `${Math.min(display.effectiveRate, 50) * 2}%` }}
+                  />
+                </div>
+                <div className="mt-2 flex justify-between text-xs text-muted">
+                  <span>0%</span>
+                  <span className="text-emerald-accent">20%</span>
+                  <span className="text-yellow-accent">30%</span>
+                  <span>50%</span>
+                </div>
+              </div>
+
+              {/* PVM Tracker */}
+              <div className="rounded-2xl border border-border bg-card p-6">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">PVM registracijos riba</h3>
+                  <span className="text-sm text-muted">
+                    {formatCurrency(annualIncome)} / {formatCurrency(TAX_CONSTANTS_2026.PVM_THRESHOLD)}
+                  </span>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full bg-white/5">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      pvmProgress >= 100 ? "bg-red-accent" : pvmProgress >= 80 ? "bg-yellow-accent" : "bg-emerald-accent"
+                    }`}
+                    style={{ width: `${pvmProgress}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-muted">
+                  {pvmProgress >= 100
+                    ? "Viršyta 45 000 € riba — privalote registruotis PVM mokėtoju"
+                    : pvmProgress >= 80
+                      ? "Artėjate prie PVM registracijos ribos"
+                      : "Iki PVM registracijos ribos dar toli"}
+                </p>
+              </div>
+
+              {/* Action Plan */}
+              <div className="rounded-2xl border border-emerald-border bg-emerald-muted/20 p-6">
+                <h3 className="mb-4 text-lg font-semibold">Ką daryti dabar?</h3>
+                <div className="space-y-3">
+                  {actionItems.map((item) => (
+                    <div key={item.title} className="rounded-xl border border-border bg-card/70 p-3">
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold">{item.title}</div>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                            item.level === "high"
+                              ? "bg-red-accent/20 text-red-accent"
+                              : item.level === "medium"
+                                ? "bg-yellow-accent/20 text-yellow-accent"
+                                : "bg-emerald-accent/20 text-emerald-accent"
+                          }`}
+                        >
+                          {item.level === "high" ? "Aukštas" : item.level === "medium" ? "Vidutinis" : "Žemas"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted">{item.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Running Total Tracker */}
+          <RunningTotalTracker
+            monthlyIncomes={monthlyIncomes}
+            setMonthlyIncomes={setMonthlyIncomes}
+            options={options}
+          />
+        </>
+      )}
     </div>
   );
 }
